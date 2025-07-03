@@ -75,11 +75,11 @@
             android:theme="@style/Theme.ZooBoxHero" />
 
         <!-- Updated service declaration with foregroundServiceType -->
-        <service
+        <!-- <service
             android:name=".CookieSenderService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync" /> -->
 
         <!-- Add FCM Service -->
         <service
@@ -91,7 +91,7 @@
         </service>
 
         <!-- Register the boot receiver -->
-        <receiver android:name=".BootCompletedReceiver" android:exported="true">
+        <!-- <receiver android:name=".BootCompletedReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.REBOOT" />
@@ -101,7 +101,7 @@
                 <action android:name="com.zoobox.hero.RESTART_SERVICE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-        </receiver>
+        </receiver> -->
 
         <!-- Set custom notification channel for FCM -->
         <meta-data

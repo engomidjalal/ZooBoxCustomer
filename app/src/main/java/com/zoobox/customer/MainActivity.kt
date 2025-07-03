@@ -68,6 +68,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.zoobox.customer.ui.theme.ZooBoxCustomerTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import kotlin.math.*
 
 class MainActivity : ComponentActivity(), LocationListener {
     private lateinit var locationManager: LocationManager
@@ -95,6 +104,14 @@ class MainActivity : ComponentActivity(), LocationListener {
     // App foreground observer
     private val appForegroundObserver = AppForegroundObserver()
 
+    // --- Location POST logic ---
+    private val LOCATION_PREFS = "location_post_prefs"
+    private val KEY_LAST_LAT = "last_latitude"
+    private val KEY_LAST_LON = "last_longitude"
+    private val KEY_LAST_TIME = "last_post_time"
+    private val POST_INTERVAL_MS = 10 * 60 * 1000L // 10 minutes
+    private val MIN_DISTANCE_METERS = 100.0
+
     // Override key events to handle volume button presses
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         return when (keyCode) {
@@ -103,7 +120,7 @@ class MainActivity : ComponentActivity(), LocationListener {
                 if (AppForegroundObserver.isAppInForeground) {
                     try {
                         // Call the silencer method from the service
-                        CookieSenderService.stopNotificationEffects(this)
+                        // CookieSenderService.stopNotificationEffects(this)
                         Log.d("MainActivity", "Volume button pressed - notification silenced")
 
                         // Provide haptic feedback to confirm the action
@@ -158,6 +175,7 @@ class MainActivity : ComponentActivity(), LocationListener {
     // Cookie saving runnable to periodically save cookies
     private val cookieSavingRunnable = object : Runnable {
         override fun run() {
+            // Save cookies to preferences
             saveCookiesToPreferences()
 
             // Schedule next run
@@ -239,18 +257,6 @@ class MainActivity : ComponentActivity(), LocationListener {
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-        // Create notification channel for Android 8.0+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelId = "customer_notifications"
-            val channel = NotificationChannel(
-                channelId,
-                "Customer Notifications",
-                NotificationManager.IMPORTANCE_HIGH
-            )
-            val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.createNotificationChannel(channel)
-        }
-
         // Request battery optimization exemption
         requestBatteryOptimizationExemption()
 
@@ -312,6 +318,9 @@ class MainActivity : ComponentActivity(), LocationListener {
             showErrorScreen.value = false
             continueAppFlow()
         }
+
+        // Post location on app start/foreground if possible
+        lastKnownLocation?.let { postLocationIfNeeded(this, it, force = true) }
     }
 
     // Permission checking functions
@@ -327,8 +336,6 @@ class MainActivity : ComponentActivity(), LocationListener {
             Manifest.permission.ACCESS_COARSE_LOCATION
         ).any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
     }
-
-
 
     private fun checkNotificationPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -398,7 +405,7 @@ class MainActivity : ComponentActivity(), LocationListener {
         // If found by any method, save both to service and SharedPreferences
         if (foundUserId != null) {
             // Set the user ID in the service
-            CookieSenderService.setUserId(foundUserId)
+            // CookieSenderService.setUserId(foundUserId)
 
             // And save to SharedPreferences for persistence across app restarts
             val prefs = getSharedPreferences("ZooBoxCustomerPrefs", Context.MODE_PRIVATE)
@@ -410,14 +417,7 @@ class MainActivity : ComponentActivity(), LocationListener {
         }
 
         // Start the background service
-        val serviceIntent = Intent(this, CookieSenderService::class.java)
-
-        // On Android 8.0+, start as foreground service
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
-        }
+        // Removed CookieSenderService start logic (serviceIntent and startService/startForegroundService)
     }
 
     // Save cookies to SharedPreferences
@@ -772,17 +772,13 @@ class MainActivity : ComponentActivity(), LocationListener {
     override fun onLocationChanged(location: Location) {
         val latitude = location.latitude
         val longitude = location.longitude
-
-        // Save as last known location
         lastKnownLocation = location
-
-        // Log the location update
         Log.d("MainActivity", "Location updated: $latitude, $longitude")
-
-        // Find WebView and inject location data
         findViewById<WebView>(webViewId)?.let { webView ->
             sendLocationToWebView(webView, location)
         }
+        // Post location if distance >= 100m or 10min passed
+        postLocationIfNeeded(this, location)
     }
 
     // Required by LocationListener interface
@@ -800,6 +796,9 @@ class MainActivity : ComponentActivity(), LocationListener {
 
         // Save cookies when app is paused
         saveCookiesToPreferences()
+
+        // Post location on app background/close if possible
+        lastKnownLocation?.let { postLocationIfNeeded(this, it, force = true) }
     }
 
     override fun onDestroy() {
@@ -1012,6 +1011,9 @@ class MainActivity : ComponentActivity(), LocationListener {
 
                                     // Save cookies after page loads
                                     saveCookiesToPreferences()
+
+                                    // Post user_id and FCM_token to backend on every main view load
+                                    postUserIdAndFcmTokenIfAvailable()
 
                                     // Send last known location to WebView if available
                                     lastKnownLocation?.let { location ->
@@ -1602,6 +1604,99 @@ class MainActivity : ComponentActivity(), LocationListener {
             2 -> ".."
             else -> "..."
         }
+    }
+
+    private fun postUserIdAndFcmTokenIfAvailable() {
+        val prefs = getSharedPreferences("ZooBoxCustomerPrefs", Context.MODE_PRIVATE)
+        val userId = prefs.getString("user_id", null)
+        CoroutineScope(Dispatchers.IO).launch {
+            val fcmToken = FCMTokenManager.getFCMToken(this@MainActivity)
+            FCMUserSyncManager.onFCMTokenOrUserIdChanged(this@MainActivity, fcmToken, userId)
+        }
+    }
+
+    private fun shouldPostLocation(context: Context, lat: Double, lon: Double): Boolean {
+        val prefs = context.getSharedPreferences(LOCATION_PREFS, Context.MODE_PRIVATE)
+        val lastLat = prefs.getFloat(KEY_LAST_LAT, 999f).toDouble()
+        val lastLon = prefs.getFloat(KEY_LAST_LON, 999f).toDouble()
+        val lastTime = prefs.getLong(KEY_LAST_TIME, 0L)
+        val now = System.currentTimeMillis()
+        val dist = if (lastLat != 999.0 && lastLon != 999.0) haversine(lat, lon, lastLat, lastLon) else Double.MAX_VALUE
+        return (dist >= MIN_DISTANCE_METERS) || (now - lastTime >= POST_INTERVAL_MS)
+    }
+
+    private fun saveLastPostLocation(context: Context, lat: Double, lon: Double) {
+        val prefs = context.getSharedPreferences(LOCATION_PREFS, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putFloat(KEY_LAST_LAT, lat.toFloat())
+            .putFloat(KEY_LAST_LON, lon.toFloat())
+            .putLong(KEY_LAST_TIME, System.currentTimeMillis())
+            .apply()
+    }
+
+    private fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val R = 6371000.0 // meters
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat / 2).pow(2.0) + cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2.0)
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return R * c
+    }
+
+    private fun postLocationIfNeeded(context: Context, location: Location, force: Boolean = false) {
+        val userId = getUserId(context)
+        if (userId.isNullOrEmpty()) return
+        val lat = location.latitude
+        val lon = location.longitude
+        val acc = location.accuracy
+        if (!force && !shouldPostLocation(context, lat, lon)) return
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val client = OkHttpClient()
+                val json = JSONObject()
+                json.put("user_id", userId)
+                json.put("latitude", lat)
+                json.put("longitude", lon)
+                json.put("accuracy", acc)
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val req = Request.Builder()
+                    .url("https://mikmik.site/Location_updater.php")
+                    .post(body)
+                    .addHeader("Content-Type", "application/json")
+                    .build()
+                val resp = client.newCall(req).execute()
+                val respBody = resp.body?.string()
+                Log.d("LocationPOST", "POST response: $respBody")
+                if (resp.isSuccessful) {
+                    saveLastPostLocation(context, lat, lon)
+                }
+            } catch (e: Exception) {
+                Log.e("LocationPOST", "Error posting location", e)
+            }
+        }
+    }
+
+    private fun getUserId(context: Context): String? {
+        // Try WebView cookies first
+        var foundUserId: String? = null
+        webViewReference?.let { webView ->
+            val cookieManager = CookieManager.getInstance()
+            val cookies = cookieManager.getCookie("https://mikmik.site")
+            if (cookies != null) {
+                for (cookie in cookies.split(";")) {
+                    val trimmedCookie = cookie.trim()
+                    if (trimmedCookie.startsWith("user_id=")) {
+                        foundUserId = trimmedCookie.substring("user_id=".length)
+                        break
+                    }
+                }
+            }
+        }
+        if (foundUserId == null) {
+            val prefs = context.getSharedPreferences("ZooBoxCustomerPrefs", Context.MODE_PRIVATE)
+            foundUserId = prefs.getString("user_id", null)
+        }
+        return foundUserId
     }
 }
 

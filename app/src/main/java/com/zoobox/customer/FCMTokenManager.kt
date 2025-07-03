@@ -6,6 +6,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import android.webkit.CookieManager
 
 object FCMTokenManager {
     private const val TAG = "FCMTokenManager"
@@ -44,15 +45,31 @@ object FCMTokenManager {
     }
 
     /**
-     * Save FCM token to preferences
+     * Save FCM token to preferences and as a cookie
      */
     fun saveToken(context: Context, token: String) {
         try {
             val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             prefs.edit().putString(KEY_FCM_TOKEN, token).apply()
             Log.d(TAG, "FCM token saved successfully: $token")
+            saveFCMTokenAsCookie(token)
         } catch (e: Exception) {
             Log.e(TAG, "Error saving FCM token", e)
+        }
+    }
+
+    /**
+     * Save the FCM token as a cookie for the WebView domain
+     */
+    private fun saveFCMTokenAsCookie(token: String) {
+        try {
+            val cookieManager = CookieManager.getInstance()
+            val cookieString = "FCM_token=$token; path=/; domain=mikmik.site; max-age=31536000" // 1 year
+            cookieManager.setCookie("https://mikmik.site", cookieString)
+            cookieManager.flush()
+            Log.d(TAG, "FCM token set as cookie: $cookieString")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting FCM token as cookie", e)
         }
     }
 

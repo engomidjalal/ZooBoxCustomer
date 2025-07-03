@@ -13,13 +13,13 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <!-- NEW: Camera permission for capturing delivery photos -->
     <uses-permission android:name="android.permission.CAMERA" />
 
     <!-- Add these new permissions for background service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -40,12 +40,11 @@
         android:usesCleartextTraffic="true"
         tools:targetApi="31">
 
-        <!-- Your existing activities -->
+        <!-- Welcome Activity - First screen users see -->
         <activity
-            android:name="com.zoobox.customer.MainActivity"
+            android:name="com.zoobox.customer.WelcomeActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize"
-            android:label="@string/app_name"
             android:theme="@style/Theme.ZooBoxHero">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -53,8 +52,24 @@
             </intent-filter>
         </activity>
 
+        <!-- Main Activity - WebView content -->
+        <activity
+            android:name="com.zoobox.customer.MainActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.ZooBoxHero" />
+
+        <!-- Permission Activity -->
         <activity
             android:name="com.zoobox.customer.PermissionActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize"
+            android:theme="@style/Theme.ZooBoxHero" />
+
+        <!-- FCM Test Activity -->
+        <activity
+            android:name="com.zoobox.customer.FCMTestActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize"
             android:theme="@style/Theme.ZooBoxHero" />

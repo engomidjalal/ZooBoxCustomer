@@ -214,10 +214,12 @@ class MainActivity : ComponentActivity(), LocationListener {
         // Configure window to respect system windows like the status bar
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        // Check if we're coming from permission activity
+        // Check if we're coming from permission activity or splash screen
         val skipSplash = intent.getBooleanExtra("SKIP_SPLASH", false)
+        val fromSplash = intent.getBooleanExtra("FROM_SPLASH", false)
 
-        if (!skipSplash) {
+        // If coming from splash screen, permissions have already been checked
+        if (!skipSplash && !fromSplash) {
             // Check permissions before showing main content
             if (!areAllPermissionsGranted()) {
                 // Redirect to permission activity
@@ -282,9 +284,15 @@ class MainActivity : ComponentActivity(), LocationListener {
     override fun onResume() {
         super.onResume()
 
-        // Always check permissions when app resumes (in case user changed them in settings)
-        if (!areAllPermissionsGranted()) {
-            startActivity(Intent(this, PermissionActivity::class.java))
+        // Only check permissions if we're not already in a permission flow
+        // This prevents the infinite loop between MainActivity and PermissionActivity
+        val isComingFromPermission = intent.getBooleanExtra("FROM_PERMISSION", false)
+        val fromSplash = intent.getBooleanExtra("FROM_SPLASH", false)
+        
+        if (!isComingFromPermission && !fromSplash && !areAllPermissionsGranted()) {
+            val permissionIntent = Intent(this, PermissionActivity::class.java)
+            permissionIntent.putExtra("FROM_MAIN", true)
+            startActivity(permissionIntent)
             finish()
             return
         }
@@ -309,7 +317,6 @@ class MainActivity : ComponentActivity(), LocationListener {
     // Permission checking functions
     private fun areAllPermissionsGranted(): Boolean {
         return checkLocationPermission() &&
-                checkBackgroundLocationPermission() &&
                 checkNotificationPermission() &&
                 checkBatteryOptimization()
     }
@@ -321,13 +328,7 @@ class MainActivity : ComponentActivity(), LocationListener {
         ).any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
     }
 
-    private fun checkBackgroundLocationPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ContextCompat.checkSelfPermission(
-                this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        } else true
-    }
+
 
     private fun checkNotificationPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -623,13 +624,12 @@ class MainActivity : ComponentActivity(), LocationListener {
         if (!gpsDialogShowing && !internetDialogShowing && !appContentSet) {
             appContentSet = true
 
-            // Check if we're coming back from the permission activity
+            // Check if we're coming back from the permission activity or splash screen
             val skipSplash = intent.getBooleanExtra("SKIP_SPLASH", false)
+            val fromSplash = intent.getBooleanExtra("FROM_SPLASH", false)
 
             setContent {
                 ZooBoxCustomerTheme {
-                    val showSplash = remember { mutableStateOf(!skipSplash) }
-
                     // Check if we should show error screen
                     if (showErrorScreen.value) {
                         MaterialTheme {
@@ -646,22 +646,22 @@ class MainActivity : ComponentActivity(), LocationListener {
                                 }
                             )
                         }
-                    } else if (showSplash.value) {
+                    } else if (!skipSplash && !fromSplash) {
+                        // Only show splash screen if not coming from permissions or splash
                         SplashScreen {
                             // When splash screen completes, just show main content
                             // (permissions already checked in onCreate)
-                            showSplash.value = false
-                            // Start location updates
                             startLocationUpdates()
                         }
                     } else {
+                        // Go directly to webview when coming from permissions or splash
                         MainContent()
                     }
                 }
             }
 
-            // If coming back from permission activity, start location updates
-            if (skipSplash) {
+            // If coming back from permission activity or splash screen, start location updates
+            if (skipSplash || fromSplash) {
                 startLocationUpdates()
             }
 
@@ -1426,6 +1426,7 @@ class MainActivity : ComponentActivity(), LocationListener {
         onSettingsClick: () -> Unit = {},
         onRetry: () -> Unit = {}
     ) {
+        val context = LocalContext.current
         val icon = when (errorType) {
             "no_internet" -> Icons.Default.SignalWifiOff
             "web_error" -> Icons.Default.ErrorOutline
@@ -1549,6 +1550,25 @@ class MainActivity : ComponentActivity(), LocationListener {
                         color = Color.White,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedButton(
+                    onClick = {
+                        val intent = Intent(context, FCMTestActivity::class.java)
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Text(
+                        text = "Test FCM",
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }

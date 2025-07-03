@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.ZooBoxHero" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.ZooBoxHero" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Set the primary color to Zoobox red -->
+        <item name="android:colorPrimary">@color/zoobox_red</item>
+        <item name="android:colorPrimaryDark">@color/zoobox_red_dark</item>
+        <item name="android:colorAccent">@color/zoobox_red</item>
+        
+        <!-- Set status bar and navigation bar colors -->
+        <item name="android:statusBarColor">@color/zoobox_background</item>
+        <item name="android:navigationBarColor">@color/zoobox_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        
+        <!-- Set background colors -->
+        <item name="android:windowBackground">@color/zoobox_background</item>
+    </style>
 </resources>

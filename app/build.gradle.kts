@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    // alias(libs.plugins.google.services) // Comment this out temporarily
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -12,7 +12,7 @@ android {
     defaultConfig {
         applicationId = "com.zoobox.customer"
         minSdk = 26
-        targetSdk = 34 // Use 34 for Play Store publishing. Use 35 ONLY if Android 15 is stable and Play Store allows it.
+        targetSdk = 35 // Updated for Android 15 compatibility
         versionCode = 3
         versionName = "1.0.2"
 
@@ -63,10 +63,10 @@ dependencies {
     // WorkManager for enhanced background service reliability
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
-    // Comment out Firebase dependencies temporarily
-    // implementation(platform(libs.firebase.bom))
-    // implementation(libs.firebase.messaging)
-    // implementation(libs.firebase.analytics)
+    // Firebase dependencies
+    implementation(platform("com.google.firebase:firebase-bom:32.7.2"))
+    implementation("com.google.firebase:firebase-messaging")
+    implementation("com.google.firebase:firebase-analytics")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

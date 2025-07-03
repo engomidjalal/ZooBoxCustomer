@@ -1,5 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Zoobox Red Color Palette -->
+    <color name="zoobox_red">#DC3545</color> <!-- Primary red -->
+    <color name="zoobox_red_light">#F86C6C</color> <!-- Light red -->
+    <color name="zoobox_red_dark">#B71C1C</color> <!-- Dark red -->
+    <color name="zoobox_red_soft">#FEE2E2</color> <!-- Soft red background -->
+    
+    <!-- Zoobox White Color Palette -->
+    <color name="zoobox_white">#FFFFFF</color>
+    <color name="zoobox_white_off">#F8F9FA</color> <!-- Off-white -->
+    <color name="zoobox_white_gray">#F2F2F7</color> <!-- Light gray-white -->
+    
+    <!-- Text Colors -->
+    <color name="zoobox_text_primary">#000000</color>
+    <color name="zoobox_text_secondary">#6C757D</color> <!-- Gray text -->
+    <color name="zoobox_text_light">#FFFFFF</color>
+    
+    <!-- Background Colors -->
+    <color name="zoobox_background">#FFFFFF</color>
+    <color name="zoobox_background_secondary">#F8F9FA</color>
+    
+    <!-- Status Colors -->
+    <color name="zoobox_success">#28A745</color> <!-- Green for success -->
+    <color name="zoobox_warning">#FFC107</color> <!-- Yellow for warning -->
+    <color name="zoobox_error">#DC3545</color> <!-- Red for errors -->
+    
+    <!-- Button Colors -->
+    <color name="zoobox_button_primary">#DC3545</color>
+    <color name="zoobox_button_secondary">#F8F9FA</color>
+    <color name="zoobox_button_disabled">#E9ECEF</color>
+    
+    <!-- Legacy colors for compatibility -->
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>

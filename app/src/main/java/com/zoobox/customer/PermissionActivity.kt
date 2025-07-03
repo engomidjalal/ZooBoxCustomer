@@ -14,6 +14,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.OnBackPressedCallback
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -43,6 +44,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.Image
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.zoobox.customer.ui.theme.ZooBoxCustomerTheme
@@ -53,7 +56,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 // FIXED: Move PermissionType outside the class and make it public
 enum class PermissionType {
-    LOCATION, BACKGROUND_LOCATION, NOTIFICATION, CAMERA, BATTERY_OPTIMIZATION
+    LOCATION, NOTIFICATION, CAMERA, BATTERY_OPTIMIZATION
 }
 
 class PermissionActivity : ComponentActivity() {
@@ -72,14 +75,12 @@ class PermissionActivity : ComponentActivity() {
     // SharedPreferences for first-time detection
     private lateinit var sharedPreferences: SharedPreferences
     private var isFirstTime = true
-    private var shouldShowWelcome = false
 
     // State variables
     private var currentStepIndex by mutableIntStateOf(0)
     private var permissionSteps by mutableStateOf(listOf<PermissionStep>())
     private var isCheckingPermissions by mutableStateOf(true)
     private var isProcessingPermission by mutableStateOf(false)
-    private var showWelcomeScreen by mutableStateOf(false)
     private var showExitDialog by mutableStateOf(false)
 
     // Enhanced variables to force permission requests
@@ -91,8 +92,6 @@ class PermissionActivity : ComponentActivity() {
     private var isWaitingForLocationSettings by mutableStateOf(false)
     private var isWaitingForNotificationSettings by mutableStateOf(false)
     private var isWaitingForCameraSettings by mutableStateOf(false)
-    private var isWaitingForBatterySettings by mutableStateOf(false)
-    private var isWaitingForBackgroundLocationSettings by mutableStateOf(false)
 
     // IMPROVED: Enhanced stuck state prevention
     private var lastPermissionRequestTime = 0L
@@ -121,40 +120,12 @@ class PermissionActivity : ComponentActivity() {
         isProcessingPermission = false
         stuckStateCheckJob?.cancel()
 
-        if (!granted) {
-            // Increment attempt counter
-            permissions.keys.forEach { permission ->
-                permissionRequestCount[permission] = (permissionRequestCount[permission] ?: 0) + 1
-            }
-            Log.d("PermissionActivity", "Location permission denied ${permissionRequestCount.values.maxOrNull()} times")
-            // Start monitoring for manual permission grant
-            startLocationPermissionMonitoring()
-        } else {
-            val stepIndex = findStepIndexByType(PermissionType.LOCATION)
-            handlePermissionResult(stepIndex, granted)
-        }
+        // Handle the result directly without monitoring
+        val stepIndex = findStepIndexByType(PermissionType.LOCATION)
+        handlePermissionResult(stepIndex, granted)
     }
 
-    private val requestBackgroundPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        Log.d("PermissionActivity", "Background location permission result: $isGranted")
 
-        // Reset processing state immediately
-        isProcessingPermission = false
-        stuckStateCheckJob?.cancel()
-
-        if (!isGranted) {
-            val permission = Manifest.permission.ACCESS_BACKGROUND_LOCATION
-            permissionRequestCount[permission] = (permissionRequestCount[permission] ?: 0) + 1
-            Log.d("PermissionActivity", "Background location permission denied ${permissionRequestCount[permission]} times")
-            // Start monitoring for manual permission grant
-            startBackgroundLocationPermissionMonitoring()
-        } else {
-            val stepIndex = findStepIndexByType(PermissionType.BACKGROUND_LOCATION)
-            handlePermissionResult(stepIndex, isGranted)
-        }
-    }
 
     private val requestNotificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -165,21 +136,9 @@ class PermissionActivity : ComponentActivity() {
         isProcessingPermission = false
         stuckStateCheckJob?.cancel()
 
-        if (!isGranted) {
-            val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                Manifest.permission.POST_NOTIFICATIONS
-            } else ""
-
-            if (permission.isNotEmpty()) {
-                permissionRequestCount[permission] = (permissionRequestCount[permission] ?: 0) + 1
-                Log.d("PermissionActivity", "Notification permission denied ${permissionRequestCount[permission]} times")
-                // Start monitoring for manual permission grant
-                startNotificationPermissionMonitoring()
-            }
-        } else {
-            val stepIndex = findStepIndexByType(PermissionType.NOTIFICATION)
-            handlePermissionResult(stepIndex, isGranted)
-        }
+        // Handle the result directly without monitoring
+        val stepIndex = findStepIndexByType(PermissionType.NOTIFICATION)
+        handlePermissionResult(stepIndex, isGranted)
     }
 
     private val requestCameraPermissionLauncher = registerForActivityResult(
@@ -191,16 +150,9 @@ class PermissionActivity : ComponentActivity() {
         isProcessingPermission = false
         stuckStateCheckJob?.cancel()
 
-        if (!isGranted) {
-            permissionRequestCount[Manifest.permission.CAMERA] =
-                (permissionRequestCount[Manifest.permission.CAMERA] ?: 0) + 1
-            Log.d("PermissionActivity", "Camera permission denied ${permissionRequestCount[Manifest.permission.CAMERA]} times")
-            // Start monitoring for manual permission grant
-            startCameraPermissionMonitoring()
-        } else {
-            val stepIndex = findStepIndexByType(PermissionType.CAMERA)
-            handlePermissionResult(stepIndex, isGranted)
-        }
+        // Handle the result directly without monitoring
+        val stepIndex = findStepIndexByType(PermissionType.CAMERA)
+        handlePermissionResult(stepIndex, isGranted)
     }
 
     private val batteryOptimizationLauncher = registerForActivityResult(
@@ -226,8 +178,8 @@ class PermissionActivity : ComponentActivity() {
         isProcessingPermission = false
         stuckStateCheckJob?.cancel()
 
-        // Start comprehensive monitoring for all permissions
-        startComprehensivePermissionMonitoring()
+        // Start monitoring for all permissions
+        checkAllPermissions()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -246,6 +198,14 @@ class PermissionActivity : ComponentActivity() {
 
         initializePermissionSteps()
 
+        // Handle back button with modern approach for Android 13+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                Log.d("PermissionActivity", "Back button pressed - showing exit confirmation")
+                showExitDialog = true
+            }
+        })
+
         setContent {
             ZooBoxCustomerTheme {
                 // Show exit confirmation dialog
@@ -261,44 +221,19 @@ class PermissionActivity : ComponentActivity() {
                     )
                 }
 
-                if (showWelcomeScreen) {
-                    // Show welcome screen only when needed
-                    WelcomeScreen(
-                        onProceedToApp = { proceedToMainActivity() }
-                    )
-                } else {
-                    // Show permission flow
-                    BeautifulPermissionScreen(
-                        steps = permissionSteps,
-                        currentStep = currentStepIndex,
-                        isCheckingPermissions = isCheckingPermissions,
-                        isProcessingPermission = isProcessingPermission,
-                        onGrantPermission = { requestCurrentPermission() },
-                        onOpenSettings = { openAppSettings() },
-                        onRetryPermission = { retryPermissionRequest() },
-                        permissionAttempts = getCurrentPermissionAttempts(),
-                        isWaitingForLocationSettings = isWaitingForLocationSettings,
-                        isWaitingForNotificationSettings = isWaitingForNotificationSettings,
-                        isWaitingForCameraSettings = isWaitingForCameraSettings,
-                        isWaitingForBatterySettings = isWaitingForBatterySettings,
-                        isWaitingForBackgroundLocationSettings = isWaitingForBackgroundLocationSettings
-                    )
-                }
+                // Show iOS-style permission screen
+                IOSStylePermissionScreen(
+                    isCheckingPermissions = isCheckingPermissions,
+                    isProcessingPermission = isProcessingPermission,
+                    onGrantPermissions = { requestCurrentPermission() },
+                    onDebugRequestAll = { forceRequestAllPermissions() },
+                    onOpenSettings = { openAppSettings() }
+                )
             }
         }
 
         // Start permission checking
         checkAllPermissions()
-    }
-
-    // FIXED: Proper back button handling with user choice
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        Log.d("PermissionActivity", "Back button pressed - showing exit confirmation")
-
-        // Don't call super.onBackPressed() immediately
-        // Instead, show dialog to let user choose
-        showExitDialog = true
     }
 
     // IMPROVED: Device-specific compatibility checks
@@ -325,7 +260,7 @@ class PermissionActivity : ComponentActivity() {
     // IMPROVED: Initialize with explicit types
     private fun initializePermissionSteps() {
         permissionSteps = buildList {
-            // Step 1: Location Permission - MANDATORY
+            // Step 1: Location Permission - MANDATORY (while using app only)
             add(PermissionStep(
                 title = "Location Access",
                 description = "Required for delivery tracking",
@@ -334,18 +269,7 @@ class PermissionActivity : ComponentActivity() {
                 type = PermissionType.LOCATION
             ))
 
-            // Step 2: Background Location (only for Android 10+) - MANDATORY
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                add(PermissionStep(
-                    title = "Background Location",
-                    description = "Required for continuous tracking",
-                    detailedDescription = "Background location access is required to continue tracking deliveries even when the app is not actively open. This ensures uninterrupted service.",
-                    icon = Icons.Default.MyLocation,
-                    type = PermissionType.BACKGROUND_LOCATION
-                ))
-            }
-
-            // Step 3: Notification Permission (only for Android 13+) - MANDATORY
+            // Step 2: Notification Permission (only for Android 13+) - MANDATORY
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(PermissionStep(
                     title = "Notifications",
@@ -356,7 +280,7 @@ class PermissionActivity : ComponentActivity() {
                 ))
             }
 
-            // Step 4: Camera Permission - MANDATORY
+            // Step 3: Camera Permission - MANDATORY
             add(PermissionStep(
                 title = "Camera Access",
                 description = "Required for delivery photos",
@@ -364,17 +288,6 @@ class PermissionActivity : ComponentActivity() {
                 icon = Icons.Default.CameraAlt,
                 type = PermissionType.CAMERA
             ))
-
-            // Step 5: Battery Optimization (Android 6+) - MANDATORY
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                add(PermissionStep(
-                    title = "Battery Optimization",
-                    description = "Required for reliable operation",
-                    detailedDescription = "Disabling battery optimization is required to prevent the system from limiting app functionality and ensuring reliable notifications and location tracking.",
-                    icon = Icons.Default.BatteryFull,
-                    type = PermissionType.BATTERY_OPTIMIZATION
-                ))
-            }
         }
 
         Log.d("PermissionActivity", "Initialized ${permissionSteps.size} MANDATORY permission steps")
@@ -396,7 +309,6 @@ class PermissionActivity : ComponentActivity() {
 
         val permission = when (currentPermissionType) {
             PermissionType.LOCATION -> Manifest.permission.ACCESS_FINE_LOCATION
-            PermissionType.BACKGROUND_LOCATION -> Manifest.permission.ACCESS_BACKGROUND_LOCATION
             PermissionType.NOTIFICATION -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                 Manifest.permission.POST_NOTIFICATIONS else ""
             PermissionType.CAMERA -> Manifest.permission.CAMERA
@@ -416,7 +328,6 @@ class PermissionActivity : ComponentActivity() {
                 val updatedSteps = permissionSteps.mapIndexed { index, step ->
                     val isGranted = when (step.type) {
                         PermissionType.LOCATION -> checkLocationPermission()
-                        PermissionType.BACKGROUND_LOCATION -> checkBackgroundLocationPermission()
                         PermissionType.NOTIFICATION -> checkNotificationPermission()
                         PermissionType.CAMERA -> checkCameraPermission()
                         PermissionType.BATTERY_OPTIMIZATION -> checkBatteryOptimization()
@@ -443,26 +354,16 @@ class PermissionActivity : ComponentActivity() {
                         .putBoolean(KEY_PERMISSIONS_GRANTED, true)
                         .apply()
 
-                    // Determine if we should show welcome screen
-                    shouldShowWelcome = isFirstTime || !hadPermissionsBefore
-
-                    if (shouldShowWelcome) {
-                        // Show welcome screen for first time users or when permissions were just granted
-                        Log.d("PermissionActivity", "Showing welcome screen (first time: $isFirstTime, had permissions before: $hadPermissionsBefore)")
-                        showWelcomeScreen = true
-                        isCheckingPermissions = false
-
-                        // Mark as no longer first time
-                        if (isFirstTime) {
-                            sharedPreferences.edit()
-                                .putBoolean(KEY_FIRST_TIME, false)
-                                .apply()
-                        }
-                    } else {
-                        // Skip welcome screen and go directly to MainActivity
-                        Log.d("PermissionActivity", "Skipping welcome screen, proceeding directly to MainActivity")
-                        proceedToMainActivity()
+                    // Mark as no longer first time and go directly to MainActivity
+                    if (isFirstTime) {
+                        sharedPreferences.edit()
+                            .putBoolean(KEY_FIRST_TIME, false)
+                            .apply()
                     }
+                    
+                    // Go directly to MainActivity after permissions are granted
+                    Log.d("PermissionActivity", "All permissions granted, proceeding directly to MainActivity")
+                    proceedToMainActivity()
                 } else {
                     // Find first non-granted permission
                     val firstDeniedIndex = permissionSteps.indexOfFirst { !it.isGranted }
@@ -472,7 +373,6 @@ class PermissionActivity : ComponentActivity() {
                         currentStepIndex = firstDeniedIndex
                         Log.d("PermissionActivity", "MANDATORY permission missing - Current step: $currentStepIndex (${permissionSteps[currentStepIndex].title})")
                     }
-                    showWelcomeScreen = false
                     isCheckingPermissions = false
                 }
             } catch (e: Exception) {
@@ -498,8 +398,16 @@ class PermissionActivity : ComponentActivity() {
             Log.w("PermissionActivity", "MANDATORY permission denied for step $stepIndex - user must grant to continue")
         }
 
-        // Always recheck all permissions after any permission result
-        checkAllPermissions()
+        // Find the next missing permission
+        val nextMissingIndex = permissionSteps.indexOfFirst { !it.isGranted }
+        if (nextMissingIndex != -1) {
+            currentStepIndex = nextMissingIndex
+            // Automatically request the next permission
+            requestCurrentPermission()
+        } else {
+            // All permissions granted, recheck and proceed
+            checkAllPermissions()
+        }
     }
 
     // IMPROVED: Enhanced permission request with stuck state detection
@@ -535,7 +443,6 @@ class PermissionActivity : ComponentActivity() {
                 withTimeoutOrNull(PERMISSION_REQUEST_TIMEOUT) {
                     when (currentPermissionType) {
                         PermissionType.LOCATION -> requestLocationPermissions()
-                        PermissionType.BACKGROUND_LOCATION -> requestBackgroundLocationPermission()
                         PermissionType.NOTIFICATION -> requestNotificationPermission()
                         PermissionType.CAMERA -> requestCameraPermission()
                         PermissionType.BATTERY_OPTIMIZATION -> requestBatteryOptimizationDisable()
@@ -583,7 +490,6 @@ class PermissionActivity : ComponentActivity() {
             val currentPermissionType = getCurrentPermissionType()
             when (currentPermissionType) {
                 PermissionType.LOCATION -> startLocationPermissionMonitoring()
-                PermissionType.BACKGROUND_LOCATION -> startBackgroundLocationPermissionMonitoring()
                 PermissionType.NOTIFICATION -> startNotificationPermissionMonitoring()
                 PermissionType.CAMERA -> startCameraPermissionMonitoring()
                 PermissionType.BATTERY_OPTIMIZATION -> startBatteryOptimizationMonitoring()
@@ -655,8 +561,7 @@ class PermissionActivity : ComponentActivity() {
 
         // Check if we're monitoring any specific permission
         if (isWaitingForLocationSettings || isWaitingForNotificationSettings ||
-            isWaitingForCameraSettings || isWaitingForBatterySettings ||
-            isWaitingForBackgroundLocationSettings) {
+            isWaitingForCameraSettings) {
 
             // Check the specific permission we're waiting for
             when {
@@ -665,15 +570,6 @@ class PermissionActivity : ComponentActivity() {
                         Log.d("PermissionActivity", "Location permission granted on resume!")
                         stopAllMonitoring()
                         val stepIndex = findStepIndexByType(PermissionType.LOCATION)
-                        handlePermissionResult(stepIndex, true)
-                        return
-                    }
-                }
-                isWaitingForBackgroundLocationSettings -> {
-                    if (checkBackgroundLocationPermission()) {
-                        Log.d("PermissionActivity", "Background location permission granted on resume!")
-                        stopAllMonitoring()
-                        val stepIndex = findStepIndexByType(PermissionType.BACKGROUND_LOCATION)
                         handlePermissionResult(stepIndex, true)
                         return
                     }
@@ -696,22 +592,12 @@ class PermissionActivity : ComponentActivity() {
                         return
                     }
                 }
-                isWaitingForBatterySettings -> {
-                    if (checkBatteryOptimization()) {
-                        Log.d("PermissionActivity", "Battery optimization disabled on resume!")
-                        stopAllMonitoring()
-                        val stepIndex = findStepIndexByType(PermissionType.BATTERY_OPTIMIZATION)
-                        handlePermissionResult(stepIndex, true)
-                        return
-                    }
-                }
             }
         }
 
         // Only recheck all permissions if we're not currently processing one and not monitoring
         if (!isProcessingPermission && !isWaitingForLocationSettings &&
-            !isWaitingForNotificationSettings && !isWaitingForCameraSettings &&
-            !isWaitingForBatterySettings && !isWaitingForBackgroundLocationSettings) {
+            !isWaitingForNotificationSettings && !isWaitingForCameraSettings) {
             checkAllPermissions()
         }
     }
@@ -752,40 +638,7 @@ class PermissionActivity : ComponentActivity() {
         }
     }
 
-    private fun startBackgroundLocationPermissionMonitoring() {
-        isWaitingForBackgroundLocationSettings = true
-        Log.d("PermissionActivity", "Starting background location permission monitoring")
 
-        permissionMonitoringJob?.cancel()
-        permissionMonitoringJob = lifecycleScope.launch {
-            try {
-                withTimeoutOrNull(MAX_MONITORING_TIME) {
-                    var elapsedTime = 0L
-
-                    while (isWaitingForBackgroundLocationSettings && elapsedTime < MAX_MONITORING_TIME) {
-                        delay(PERMISSION_CHECK_INTERVAL)
-                        elapsedTime += PERMISSION_CHECK_INTERVAL
-
-                        val isGranted = checkBackgroundLocationPermission()
-                        Log.d("PermissionActivity", "Monitoring background location permission - Elapsed: ${elapsedTime}ms, Granted: $isGranted")
-
-                        if (isGranted) {
-                            Log.d("PermissionActivity", "Background location permission granted detected!")
-                            isWaitingForBackgroundLocationSettings = false
-                            val stepIndex = findStepIndexByType(PermissionType.BACKGROUND_LOCATION)
-                            handlePermissionResult(stepIndex, true)
-                            return@withTimeoutOrNull
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("PermissionActivity", "Error in background location permission monitoring", e)
-            } finally {
-                isWaitingForBackgroundLocationSettings = false
-                Log.d("PermissionActivity", "Background location permission monitoring ended")
-            }
-        }
-    }
 
     private fun startNotificationPermissionMonitoring() {
         isWaitingForNotificationSettings = true
@@ -858,42 +711,7 @@ class PermissionActivity : ComponentActivity() {
     }
 
     private fun startBatteryOptimizationMonitoring() {
-        isWaitingForBatterySettings = true
         Log.d("PermissionActivity", "Starting battery optimization monitoring")
-
-        permissionMonitoringJob?.cancel()
-        permissionMonitoringJob = lifecycleScope.launch {
-            try {
-                withTimeoutOrNull(MAX_MONITORING_TIME) {
-                    var elapsedTime = 0L
-
-                    while (isWaitingForBatterySettings && elapsedTime < MAX_MONITORING_TIME) {
-                        delay(PERMISSION_CHECK_INTERVAL)
-                        elapsedTime += PERMISSION_CHECK_INTERVAL
-
-                        val isOptimizationDisabled = checkBatteryOptimization()
-                        Log.d("PermissionActivity", "Monitoring battery optimization - Elapsed: ${elapsedTime}ms, Disabled: $isOptimizationDisabled")
-
-                        if (isOptimizationDisabled) {
-                            Log.d("PermissionActivity", "Battery optimization disabled detected!")
-                            isWaitingForBatterySettings = false
-                            val stepIndex = findStepIndexByType(PermissionType.BATTERY_OPTIMIZATION)
-                            handlePermissionResult(stepIndex, true)
-                            return@withTimeoutOrNull
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("PermissionActivity", "Error in battery optimization monitoring", e)
-            } finally {
-                isWaitingForBatterySettings = false
-                Log.d("PermissionActivity", "Battery optimization monitoring ended")
-            }
-        }
-    }
-
-    private fun startComprehensivePermissionMonitoring() {
-        Log.d("PermissionActivity", "Starting comprehensive permission monitoring")
 
         permissionMonitoringJob?.cancel()
         permissionMonitoringJob = lifecycleScope.launch {
@@ -907,12 +725,10 @@ class PermissionActivity : ComponentActivity() {
 
                         // Check all permissions
                         val locationGranted = checkLocationPermission()
-                        val backgroundLocationGranted = checkBackgroundLocationPermission()
                         val notificationGranted = checkNotificationPermission()
                         val cameraGranted = checkCameraPermission()
-                        val batteryOptimizationDisabled = checkBatteryOptimization()
 
-                        Log.d("PermissionActivity", "Comprehensive monitoring - Location: $locationGranted, Background: $backgroundLocationGranted, Notification: $notificationGranted, Camera: $cameraGranted, Battery: $batteryOptimizationDisabled")
+                        Log.d("PermissionActivity", "Comprehensive monitoring - Location: $locationGranted, Notification: $notificationGranted, Camera: $cameraGranted")
 
                         // Check if any permission state changed
                         var permissionChanged = false
@@ -920,12 +736,6 @@ class PermissionActivity : ComponentActivity() {
                         val locationStepIndex = findStepIndexByType(PermissionType.LOCATION)
                         if (locationStepIndex >= 0 && locationGranted && !permissionSteps[locationStepIndex].isGranted) {
                             Log.d("PermissionActivity", "Location permission change detected!")
-                            permissionChanged = true
-                        }
-
-                        val backgroundStepIndex = findStepIndexByType(PermissionType.BACKGROUND_LOCATION)
-                        if (backgroundStepIndex >= 0 && backgroundLocationGranted && !permissionSteps[backgroundStepIndex].isGranted) {
-                            Log.d("PermissionActivity", "Background location permission change detected!")
                             permissionChanged = true
                         }
 
@@ -938,12 +748,6 @@ class PermissionActivity : ComponentActivity() {
                         val cameraStepIndex = findStepIndexByType(PermissionType.CAMERA)
                         if (cameraStepIndex >= 0 && cameraGranted && !permissionSteps[cameraStepIndex].isGranted) {
                             Log.d("PermissionActivity", "Camera permission change detected!")
-                            permissionChanged = true
-                        }
-
-                        val batteryStepIndex = findStepIndexByType(PermissionType.BATTERY_OPTIMIZATION)
-                        if (batteryStepIndex >= 0 && batteryOptimizationDisabled && !permissionSteps[batteryStepIndex].isGranted) {
-                            Log.d("PermissionActivity", "Battery optimization change detected!")
                             permissionChanged = true
                         }
 
@@ -969,8 +773,6 @@ class PermissionActivity : ComponentActivity() {
         isWaitingForLocationSettings = false
         isWaitingForNotificationSettings = false
         isWaitingForCameraSettings = false
-        isWaitingForBatterySettings = false
-        isWaitingForBackgroundLocationSettings = false
         permissionMonitoringJob?.cancel()
         Log.d("PermissionActivity", "All permission monitoring stopped")
     }
@@ -983,13 +785,7 @@ class PermissionActivity : ComponentActivity() {
         ).any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
     }
 
-    private fun checkBackgroundLocationPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ContextCompat.checkSelfPermission(
-                this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        } else true
-    }
+
 
     private fun checkNotificationPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -1014,58 +810,22 @@ class PermissionActivity : ComponentActivity() {
 
     // Enhanced permission request methods with device-specific handling
     private fun requestLocationPermissions() {
-        val deviceInfo = getDeviceInfo()
-        val isProblematic = isKnownProblematicDevice()
-
-        Log.d("PermissionActivity", "Requesting location permissions on: $deviceInfo (Problematic: $isProblematic)")
-
-        if (isProblematic) {
-            // For problematic devices, start monitoring immediately
-            lifecycleScope.launch {
-                delay(2000) // Give some time for dialog to appear
-                if (isProcessingPermission && !checkLocationPermission()) {
-                    Log.w("PermissionActivity", "Problematic device detected, starting early monitoring")
-                    startLocationPermissionMonitoring()
-                }
-            }
-        }
-
+        Log.d("PermissionActivity", "Requesting location permissions (system dialog)")
         try {
             requestLocationPermissionsLauncher.launch(arrayOf(
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION
             ))
         } catch (e: Exception) {
-            Log.e("PermissionActivity", "Failed to launch location permission request on $deviceInfo", e)
+            Log.e("PermissionActivity", "Failed to launch location permission request", e)
             isProcessingPermission = false
-            startLocationPermissionMonitoring()
+            // Handle the error by treating as denied
+            val stepIndex = findStepIndexByType(PermissionType.LOCATION)
+            handlePermissionResult(stepIndex, false)
         }
     }
 
-    private fun requestBackgroundLocationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Check if location permission is granted first
-            if (!checkLocationPermission()) {
-                Log.w("PermissionActivity", "MANDATORY location permission not granted, cannot request background location")
-                isProcessingPermission = false
-                checkAllPermissions()
-                return
-            }
 
-            Log.d("PermissionActivity", "Requesting MANDATORY background location permission (attempt ${(permissionRequestCount[Manifest.permission.ACCESS_BACKGROUND_LOCATION] ?: 0) + 1})")
-
-            try {
-                requestBackgroundPermissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-            } catch (e: Exception) {
-                Log.e("PermissionActivity", "Failed to launch background location permission request", e)
-                isProcessingPermission = false
-                startBackgroundLocationPermissionMonitoring()
-            }
-        } else {
-            Log.d("PermissionActivity", "Background location not needed for this Android version")
-            isProcessingPermission = false
-        }
-    }
 
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -1121,7 +881,6 @@ class PermissionActivity : ComponentActivity() {
         }
     }
 
-    // Device-specific settings intent
     private fun openAppSettings() {
         if (isProcessingPermission) {
             Log.w("PermissionActivity", "Settings launch already in progress")
@@ -1131,7 +890,7 @@ class PermissionActivity : ComponentActivity() {
         isProcessingPermission = true
 
         try {
-            Log.d("PermissionActivity", "Opening app settings on: ${getDeviceInfo()}")
+            Log.d("PermissionActivity", "Opening app settings on: "+getDeviceInfo())
 
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                 data = Uri.parse("package:$packageName")
@@ -1154,7 +913,7 @@ class PermissionActivity : ComponentActivity() {
                 }
             }
         } catch (e: Exception) {
-            Log.e("PermissionActivity", "Failed to open app settings on ${getDeviceInfo()}", e)
+            Log.e("PermissionActivity", "Failed to open app settings on "+getDeviceInfo(), e)
             isProcessingPermission = false
         }
     }
@@ -1169,6 +928,7 @@ class PermissionActivity : ComponentActivity() {
             Log.d("PermissionActivity", "SUCCESS: Proceeding to MainActivity")
             val intent = Intent(this, MainActivity::class.java).apply {
                 putExtra("SKIP_SPLASH", true)
+                putExtra("FROM_PERMISSION", true)  // Flag to prevent infinite loop
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             }
             startActivity(intent)
@@ -1180,11 +940,15 @@ class PermissionActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        stopAllMonitoring()
-        stuckStateCheckJob?.cancel()
-        Log.d("PermissionActivity", "Permission activity destroyed")
+    private fun forceRequestAllPermissions() {
+        Log.d("PermissionActivity", "Force requesting all permissions")
+        
+        // Reset all permission states
+        permissionRequestCount.clear()
+        currentStepIndex = 0
+        
+        // Start from the beginning
+        checkAllPermissions()
     }
 }
 
@@ -1259,12 +1023,11 @@ fun ExitConfirmationDialog(
             }
         },
         containerColor = Color.White,
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.semantics {
-            contentDescription = "Dialog asking whether to exit app or continue with required permissions"
-        }
+        shape = RoundedCornerShape(16.dp)
     )
 }
+
+
 
 // Helper functions for responsive design
 @Composable
@@ -1319,252 +1082,7 @@ private fun getResponsiveIconSize(base: Dp): Dp {
     }
 }
 
-// Welcome Screen Composable with responsive design
-@Composable
-fun WelcomeScreen(
-    onProceedToApp: () -> Unit
-) {
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
-    val padding = getResponsivePadding()
 
-    val gradientColors = listOf(
-        Color(0xFF0077B6),
-        Color(0xFF00B4D8),
-        Color(0xFF90E0EF)
-    )
-
-    // Animation for the welcome screen
-    val scale by animateFloatAsState(
-        targetValue = 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
-        ),
-        label = "welcome_scale"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(colors = gradientColors)
-            )
-    ) {
-        if (isLandscape) {
-            // Landscape layout
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Left side - Icon and title
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 16.dp)
-                ) {
-                    // Success icon
-                    Box(
-                        modifier = Modifier
-                            .size(getResponsiveIconSize(100.dp))
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.2f))
-                            .semantics {
-                                contentDescription = "Success checkmark indicating all permissions granted"
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "Success checkmark",
-                            tint = Color.White,
-                            modifier = Modifier.size(getResponsiveIconSize(70.dp))
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Title
-                    Text(
-                        text = "All Set!",
-                        fontSize = getResponsiveTextSize(28).sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        textAlign = TextAlign.Center
-                    )
-                }
-
-                // Right side - Description and button
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 16.dp)
-                ) {
-                    // Description
-                    Text(
-                        text = "All required permissions have been granted successfully. ZooBox is ready to provide you with the best delivery experience!",
-                        fontSize = getResponsiveTextSize(16).sp,
-                        color = Color.White.copy(alpha = 0.9f),
-                        textAlign = TextAlign.Center,
-                        lineHeight = (getResponsiveTextSize(16) + 4).sp
-                    )
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // Welcome button
-                    Button(
-                        onClick = onProceedToApp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(getResponsiveButtonHeight())
-                            .scale(scale)
-                            .semantics {
-                                contentDescription = "Welcome to ZooBox button. Tap to start using the app."
-                            },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(16.dp),
-                        elevation = ButtonDefaults.buttonElevation(
-                            defaultElevation = 8.dp
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowForward,
-                            contentDescription = "Arrow forward icon",
-                            tint = Color(0xFF0077B6),
-                            modifier = Modifier.size(getResponsiveIconSize(20.dp))
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Welcome to ZooBox",
-                            fontSize = getResponsiveTextSize(16).sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF0077B6)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Additional info
-                    Text(
-                        text = "Tap the button above to start using the app",
-                        fontSize = getResponsiveTextSize(12).sp,
-                        color = Color.White.copy(alpha = 0.7f),
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-        } else {
-            // Portrait layout
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                Spacer(modifier = Modifier.weight(0.5f))
-
-                // Success icon
-                Box(
-                    modifier = Modifier
-                        .size(getResponsiveIconSize(120.dp))
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.2f))
-                        .semantics {
-                            contentDescription = "Success checkmark indicating all permissions granted"
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = "Success checkmark",
-                        tint = Color.White,
-                        modifier = Modifier.size(getResponsiveIconSize(80.dp))
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Title
-                Text(
-                    text = "All Set!",
-                    fontSize = getResponsiveTextSize(32).sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Description
-                Text(
-                    text = "All required permissions have been granted successfully. ZooBox is ready to provide you with the best delivery experience!",
-                    fontSize = getResponsiveTextSize(16).sp,
-                    color = Color.White.copy(alpha = 0.9f),
-                    textAlign = TextAlign.Center,
-                    lineHeight = (getResponsiveTextSize(16) + 4).sp,
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                )
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                // Welcome button
-                Button(
-                    onClick = onProceedToApp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(getResponsiveButtonHeight())
-                        .scale(scale)
-                        .semantics {
-                            contentDescription = "Welcome to ZooBox button. Tap to start using the app."
-                        },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    elevation = ButtonDefaults.buttonElevation(
-                        defaultElevation = 8.dp
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowForward,
-                        contentDescription = "Arrow forward icon",
-                        tint = Color(0xFF0077B6),
-                        modifier = Modifier.size(getResponsiveIconSize(20.dp))
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Welcome to ZooBox",
-                        fontSize = getResponsiveTextSize(16).sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0077B6)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Additional info
-                Text(
-                    text = "Tap the button above to start using the app",
-                    fontSize = getResponsiveTextSize(12).sp,
-                    color = Color.White.copy(alpha = 0.7f),
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.weight(0.3f))
-            }
-        }
-    }
-}
 
 // IMPROVED: Permission screen with better responsiveness and state handling
 @OptIn(ExperimentalAnimationApi::class)
@@ -1581,7 +1099,6 @@ fun BeautifulPermissionScreen(
     isWaitingForLocationSettings: Boolean = false,
     isWaitingForNotificationSettings: Boolean = false,
     isWaitingForCameraSettings: Boolean = false,
-    isWaitingForBatterySettings: Boolean = false,
     isWaitingForBackgroundLocationSettings: Boolean = false
 ) {
     val configuration = LocalConfiguration.current
@@ -1718,7 +1235,6 @@ fun BeautifulPermissionScreen(
                                 isWaitingForLocationSettings = isWaitingForLocationSettings,
                                 isWaitingForNotificationSettings = isWaitingForNotificationSettings,
                                 isWaitingForCameraSettings = isWaitingForCameraSettings,
-                                isWaitingForBatterySettings = isWaitingForBatterySettings,
                                 isWaitingForBackgroundLocationSettings = isWaitingForBackgroundLocationSettings
                             )
                         }
@@ -1776,7 +1292,6 @@ fun BeautifulPermissionScreen(
                             isWaitingForLocationSettings = isWaitingForLocationSettings,
                             isWaitingForNotificationSettings = isWaitingForNotificationSettings,
                             isWaitingForCameraSettings = isWaitingForCameraSettings,
-                            isWaitingForBatterySettings = isWaitingForBatterySettings,
                             isWaitingForBackgroundLocationSettings = isWaitingForBackgroundLocationSettings
                         )
                     }
@@ -1810,7 +1325,6 @@ fun CurrentPermissionCard(
     isWaitingForLocationSettings: Boolean = false,
     isWaitingForNotificationSettings: Boolean = false,
     isWaitingForCameraSettings: Boolean = false,
-    isWaitingForBatterySettings: Boolean = false,
     isWaitingForBackgroundLocationSettings: Boolean = false
 ) {
     val configuration = LocalConfiguration.current
@@ -1831,7 +1345,7 @@ fun CurrentPermissionCard(
         "Background Location" -> isWaitingForBackgroundLocationSettings
         "Notifications" -> isWaitingForNotificationSettings
         "Camera Access" -> isWaitingForCameraSettings
-        "Battery Optimization" -> isWaitingForBatterySettings
+                    "Battery Optimization" -> false
         else -> false
     }
 
@@ -2433,6 +1947,306 @@ fun PermissionProgressIndicator(
                     )
                 }
             }
+        }
+    }
+}
+
+// iOS-style permission screen matching the iOS design
+@Composable
+fun IOSStylePermissionScreen(
+    isCheckingPermissions: Boolean,
+    isProcessingPermission: Boolean,
+    onGrantPermissions: () -> Unit,
+    onDebugRequestAll: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    var contentVisible by remember { mutableStateOf(false) }
+    var permissionsVisible by remember { mutableStateOf(false) }
+    var buttonVisible by remember { mutableStateOf(false) }
+    var buttonPressed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        delay(300)
+        contentVisible = true
+        delay(200)
+        permissionsVisible = true
+        delay(200)
+        buttonVisible = true
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+    ) {
+        // Soft red accent at the top
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+                .align(Alignment.TopCenter)
+                .background(
+                    color = Color(0xFFFEE2E2),
+                    shape = RoundedCornerShape(bottomStart = 60.dp, bottomEnd = 60.dp)
+                )
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(60.dp))
+
+            // Shield icon in circle
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .offset(
+                        y = animateDpAsState(
+                            targetValue = if (contentVisible) 0.dp else (-40).dp,
+                            animationSpec = tween(600)
+                        ).value
+                    )
+                    .background(Color(0xFFDC3545), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Shield,
+                    contentDescription = "Security Shield",
+                    tint = Color.White,
+                    modifier = Modifier.size(40.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Title
+            Text(
+                text = "Permissions Needed",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFDC3545),
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .offset(
+                        y = animateDpAsState(
+                            targetValue = if (contentVisible) 0.dp else 30.dp,
+                            animationSpec = tween(500)
+                        ).value
+                    )
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Subtitle
+            Text(
+                text = "To give you the best experience, we need a few permissions",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF6C757D),
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .offset(
+                        y = animateDpAsState(
+                            targetValue = if (contentVisible) 0.dp else 20.dp,
+                            animationSpec = tween(500)
+                        ).value
+                    )
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Permission cards
+            if (isCheckingPermissions || isProcessingPermission) {
+                // Loading state
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp)
+                        .background(
+                            color = Color(0xFFF8F9FA),
+                            shape = RoundedCornerShape(16.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator(
+                            color = Color(0xFFDC3545),
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Checking permissions...",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF6C757D)
+                        )
+                    }
+                }
+            } else {
+                // Permission list
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    PermissionCard(
+                        icon = Icons.Default.LocationOn,
+                        title = "Location Access",
+                        description = "For delivery tracking and route optimization",
+                        color = Color(0xFFDC3545)
+                    )
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    PermissionCard(
+                        icon = Icons.Default.CameraAlt,
+                        title = "Camera Access",
+                        description = "To capture delivery photos and proof",
+                        color = Color(0xFFF86C6C)
+                    )
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    PermissionCard(
+                        icon = Icons.Default.Notifications,
+                        title = "Notifications",
+                        description = "For delivery alerts and updates",
+                        color = Color(0xFFB71C1C)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Grant Permissions Button
+            Button(
+                onClick = {
+                    buttonPressed = true
+                    onGrantPermissions()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .scale(
+                        animateFloatAsState(
+                            targetValue = if (buttonPressed) 0.96f else 1f,
+                            animationSpec = tween(100)
+                        ).value
+                    )
+                    .offset(
+                        y = animateDpAsState(
+                            targetValue = if (buttonVisible) 0.dp else 40.dp,
+                            animationSpec = tween(500)
+                        ).value
+                    ),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFDC3545)
+                ),
+                shape = RoundedCornerShape(28.dp),
+                elevation = ButtonDefaults.buttonElevation(10.dp)
+            ) {
+                Text(
+                    text = "Grant Permissions",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        // Debug button (top right, subtle)
+        Button(
+            onClick = onDebugRequestAll,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 16.dp, end = 16.dp)
+                .size(48.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFFDC3545).copy(alpha = 0.1f)
+            ),
+            shape = CircleShape
+        ) {
+            Icon(
+                imageVector = Icons.Default.BugReport,
+                contentDescription = "Debug",
+                tint = Color(0xFFDC3545),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun PermissionCard(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    color: Color
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(72.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFFF8F9FA)
+        ),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(4.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Icon
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(color.copy(alpha = 0.1f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = color,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            // Text content
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF000000)
+                )
+                Text(
+                    text = description,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = Color(0xFF6C757D)
+                )
+            }
+
+            // Check icon (always show as pending for now)
+            Icon(
+                imageVector = Icons.Default.Schedule,
+                contentDescription = "Pending",
+                tint = Color(0xFF6C757D),
+                modifier = Modifier.size(20.dp)
+            )
         }
     }
 }
